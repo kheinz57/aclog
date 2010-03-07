@@ -12,22 +12,29 @@
 %   See the License for the specific language governing permissions and
 %   limitations under the License.
 -module(aclog).
--export([starthttp/0,starthttps/0,getdataashtml/3,getdataasjs/3,getdataasjson/3,logdata/3,initdb/3,initdbwithsamples/3,printdb/3,main/0,main/1,query_full_table/0]).
+-export([starthttp/0,starthttps/0,getdataashtml/3,getdataasjs/3,getdataasjson/3,logdata/3,initdb/3,initdbwithsamples/3,printdb/3,main/0,query_full_table/0]).
 
 -include_lib("stdlib/include/qlc.hrl").
 % systime and remote time are stored as milliseconds since the epoch (1970-1-1 0:0:0)
 -record(aclog, {systime,remotetime,turns}).
 
 -define(TURNSPERKWH,75). % how many turns per kWh. Is specific for the used meter
--define(HOURINMS, 3600000).
+-define(HOURINMS, 3600000). 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % management stuff
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% convert the gregorigian calender seconds to seconds since the epoch (1970-01-01)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 gregorianToEpoch(TimeInS) ->
 	TimeInS-(719528*24*3600).
 
 strToInt(Str) -> 	{Int, _} = string:to_integer(Str),Int.
 	
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Parse a string in full date and time format and return the number of seconds
+% since the epoch
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 stringToMillisecondsSinceEpoch(TimeString) ->
 	[Y,M,D,H,Min,S] = string:tokens(TimeString,"-.:"),
 	DateTime = {{strToInt(Y),strToInt(M),strToInt(D)},
@@ -36,18 +43,32 @@ stringToMillisecondsSinceEpoch(TimeString) ->
 	Seconds = calendar:datetime_to_gregorian_seconds(DateTime),
 	gregorianToEpoch(Seconds) * 1000.
 	
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% the actual time in ms since the epoch
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 getActTimeUTC() ->
 	1000*(calendar:datetime_to_gregorian_seconds(calendar:now_to_universal_time( now()))-719528*24*3600).
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% each turn (= one turne of the ferraris meter for example) is a specific amount 
+% of energy. Use the TURNSPERKWH (defined above) to calc the energy of one turn
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 calcKiloWattHours(Turns) ->
 	(Turns / ?TURNSPERKWH).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% calc th power (Energy/time) for the given turns and diff time in ms
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 calcKiloWatts(DiffTimeInMS, Turns) ->
 	KiloWattHours = calcKiloWattHours(Turns),
 	Hours = DiffTimeInMS / (3600000),
 	KiloWattHours / Hours.
 	
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% set up the database and creta ethe table aclog 
+% it will bestored on disk and without a replication
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 setupDatabase() ->
 	mnesia:stop(),
 	mnesia:delete_schema([node()]),
@@ -58,6 +79,9 @@ setupDatabase() ->
 	io:format("create_table()=~p~n",[mnesia:create_table(aclog, [ {disc_copies, [node()] },{attributes,record_info(fields,aclog)}])]),
 	io:format("setupDatabase done", []).
 	
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% start database and connect to a - hopefully - existing table
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 initDatabase() ->
 	mnesia:start(),
 	io:format("mnesia:wait_for_tables()=~p~n",[mnesia:wait_for_tables([aclog], 20000)]),
@@ -66,7 +90,6 @@ initDatabase() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % create some sample data
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
 fillTable(List, _Time, 0) -> List;
 fillTable(List, Time, Elements) ->
 	Time1 = Time  + 1 + random:uniform(150),
@@ -83,6 +106,10 @@ createSampleData(Entries)->
 	{atomic,_Result} = mnesia:transaction(F),
 	nil.
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Adds a new entry. Usually called by the http 'servlet' handler used by the meter connected
+% to the powerline or watches the ferraris meter's turns 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 addEntry(Time, Turns)->
 	io:format("addentry(~p,~p)~n",[Time, Turns]),
 	Servertime=getActTimeUTC(),
@@ -102,7 +129,9 @@ do(Q) ->
 	F = fun() -> qlc:e(Q) end,
 	{atomic, Val} = mnesia:transaction(F),
 	Val.
-
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% calc a list of differences between entry n and n+1 in the list. 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 calcDiff(_PreviousTime, [], Accu) -> 
 	Accu;
 
@@ -120,7 +149,7 @@ calcDiff(PreviousTime, List, Accu) ->
 	end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% 
+% Make a Java Script (JSON) List
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 makeJSList([], Accu) -> Accu;
 
@@ -132,127 +161,138 @@ makeJSList(DiffList, Accu) ->
  	makeJSList(Rest, AccuNew).
 
 %sumEntries(Entry, {}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% In case of to many datapoints for the web page (it does not help to send more data
+% to the browser as there are horizontal pixels)
+% this is an optimization not done yet
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 	
 reduceList(LongList) ->
 	LongList.
 	
-	
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Get the data for the given interval and return the date as a JSON struct/list
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 queryDatabase(QueryStartTime, QueryEndTime) ->
 	UnsortedList = do(qlc:q([X || X <- mnesia:table(aclog),(X#aclog.remotetime >= QueryStartTime), (X#aclog.remotetime < QueryEndTime) ])),
-%	io:format("UnsortedList=~n~p~n",[UnsortedList]),
 	LongList=lists:sort(fun(A, B) -> A#aclog.remotetime =< B#aclog.remotetime end, UnsortedList),
 	List = reduceList(LongList),
-%	io:format("List=~n~p~n",[List]),
 	[H|T] = List,
 	StartTime = H#aclog.remotetime,
-%	io:format("StartTime=~p, StartQueryTime=~p~n",[StartTime,StartQueryTime]),
 	DiffList = calcDiff(StartTime, T,[]),
-%	io:format("DiffList=~n~p~n",[DiffList]),
 	DataList = makeJSList(DiffList,[]),
-%	io:format("DataList=~n~p~n",[DataList]),
 	[_|DataListJS] = lists:flatten([io_lib:format(",[~B,~f]",[X,Y]) || {X,Y}<-DataList]),
 	io:format("[~s]",[DataListJS]),
 	io_lib:format("[~s]",[DataListJS]).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% get all date
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 query_full_table() ->
 	RandomList = do(qlc:q([X || X <- mnesia:table(aclog)])),
 	List=lists:sort(fun(A, B) -> A#aclog.remotetime =< B#aclog.remotetime end, RandomList),
 	io_lib:format("query result:~p~n",[List]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% 
+% main routine. Since i am used to do C++ it had to be that way.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-main(_) ->
+main() ->
 	initDatabase(),
 	inets:start(),
 	aclog:starthttp(),
-%	aclog:starthttps(),
 	nil.
-
-main() ->
- main(x).
-
  
- 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Start up the http server
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 starthttp() ->
  inets:start(httpd, [
-  {modules, [mod_esi,mod_get, mod_log, mod_disk_log,mod_auth]},
-  {port,8081},
-  {server_name,"aclog"},
-  {server_root,"log"},
-  {document_root,"www"},
-%  {socket_type,ssl},
-%  {ssl_verify_client, 0},
-%  {ssl_certificate_key_file,"ssl.key"},
-%  {ssl_certificate_file, "ssl.crt"},
-  {directory_index, ["index.hml", "index.htm"]},
-  {erl_script_alias, {"/erl", [aclog]}},
-  {error_log, "error.log"},
-  {security_log, "security.log"},
-  {transfer_log, "transfer.log"},
-  {mime_types,[
-   {"html","text/html"},
-   {"css","text/css"},
-   {"js","application/x-javascript"},
-   {"json","application/json"}
-  ]}
- ]),
+	  {modules, [mod_esi,mod_get, mod_log, mod_disk_log,mod_auth]},
+	  {port,8081},
+	  {server_name,"aclog"},
+	  {server_root,"log"},
+	  {document_root,"www"},
+	  {directory_index, ["index.hml", "index.htm"]},
+	  {erl_script_alias, {"/erl", [aclog]}},
+	  {error_log, "error.log"},
+	  {security_log, "security.log"},
+	  {transfer_log, "transfer.log"},
+	  {mime_types,[ {"html","text/html"}, {"css","text/css"},
+					{"js","application/x-javascript"},{"json","application/json"}]}
+	 ]),
  	io:format("http start done~n", []).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Start up the https server
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 starthttps() ->
   inets:start(httpd, [
-  {modules, [mod_esi,mod_get, mod_log, mod_disk_log]},
-  {port,8082},
-  {server_name,"aclog"},
-  {server_root,"logssl"},
-  {document_root,"www"},
-  {socket_type,ssl},
-  {ssl_verify_client, 0},
-  {ssl_certificate_key_file,"ssl.key"},
-  {ssl_certificate_file, "ssl.crt"},
-  {directory_index, ["index.hml", "index.htm"]},
-  {erl_script_alias, {"/erl", [aclog]}},
-  {error_log, "error.log"},
-  {security_log, "security.log"},
-  {transfer_log, "transfer.log"},
-  {mime_types,[
-   {"html","text/html"},
-   {"css","text/css"},
-   {"js","application/x-javascript"},
-   {"json","application/json"}
-  ]}
- ]),
+	  {modules, [mod_esi,mod_get, mod_log, mod_disk_log]},
+	  {port,8082},
+	  {server_name,"aclog"},
+	  {server_root,"logssl"},
+	  {document_root,"www"},
+	  {socket_type,ssl},
+	  {ssl_verify_client, 0},
+	  {ssl_certificate_key_file,"ssl.key"},
+	  {ssl_certificate_file, "ssl.crt"},
+	  {directory_index, ["index.hml", "index.htm"]},
+	  {erl_script_alias, {"/erl", [aclog]}},
+	  {error_log, "error.log"},
+	  {security_log, "security.log"},
+	  {transfer_log, "transfer.log"},
+	  {mime_types,[ {"html","text/html"},{"css","text/css"},
+					{"js","application/x-javascript"},{"json","application/json"}]}
+	 ]),
  	io:format("https start done~n", []).
 
  
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Servlet (erl_script_alias / mod_esi)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% This does create a new database table. !!!Deletes all enties!!!
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 initdb(SessionID, _Env, _Input) ->
 	setupDatabase(),
-	mod_esi:deliver(SessionID, [
-			"Content-Type: text/html\r\n\r\n", 
-			"<html><body>Database set up done</body></html>"
+	mod_esi:deliver(SessionID, 
+		[	"Content-Type: text/html\r\n\r\n", 
+			"<html><body>Database set up done</body></html>" 
 		]).
 
-initdbwithsamples(SessionID, _Env, _Input) ->
-	setupDatabase(),
-	createSampleData(20),
-	mod_esi:deliver(SessionID, [
-			"Content-Type: text/html\r\n\r\n", 
-			"<html><body>Database is filled with sample data now</body></html>"
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% creates 100 random sample data
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+createsamples(SessionID, _Env, _Input) ->
+	createSampleData(100),
+	mod_esi:deliver(SessionID, 
+		[	"Content-Type: text/html\r\n\r\n", 
+			"<html><body>Database is filled with sample data now</body></html>" 
 		]).
 		
-%Example URL: "http://localhost:8081/erl/aclog:logdata?systime=1&remotetime=2&turns=3" 
-%Input: "logdata?remotetime=2&turns=3" 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% This is the url used by the meter - usually a small controller attached to a ferraris
+% or other smart meter
+%
+% This should be changed to POST, because GET - according to CRUD - should not modify  
+% anything on the server side (side effect free)
+% Example URL: "http://localhost:8081/erl/aclog:logdata?systime=1&remotetime=2&turns=3" 
+% Input: "logdata?remotetime=2&turns=3" 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 logdata(SessionID, _Env, Input) ->
 	["time",TimeString, "turns",TurnsString] = string:tokens(Input,"=&"),
 	{Time,_} = string:to_integer(TimeString),
 	{Turns,_} = string:to_integer(TurnsString),
 	addEntry(Time,Turns),
-	mod_esi:deliver(SessionID, [
-			"Content-Type: text/html\r\n\r\n", 
-			"<html><body><pre>Entry added</pre></body></html>"
+	mod_esi:deliver(SessionID, 
+		[   "Content-Type: text/html\r\n\r\n", 
+			"<html><body><pre>Entry added</pre></body></html>" 
 		]).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Does parse the 'get' parameters from the GUI
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 parseInput(Input) ->
 	io:format("Input:~p~n",[Input]),
 	Tokens = string:tokens(Input,"=&"),
@@ -269,63 +309,47 @@ parseInput(Input) ->
 			From = To - (?HOURINMS * 24)
 	end,
 	io:format("From:~p  To:~p~n",[From,To]),
-%	io:format("Test:~p~n",
-%		[calender:gregorian_seconds_to_datetime(1259686800)]),
-%	io:format("From:~p  To:~p~n",
-%		[calender:gregorian_seconds_to_datetime(From div 1000),
-%		 calender:gregorian_seconds_to_datetime(To div 1000)]),
 	{From,To}.
 
-% Example: "http://localhost:8081/erl/aclog:getdata?from=2009-12-01.17:00:00&to=2009-12-01.18:00:00"
-% Input: "from=2009-12-01.17:00:00&to=2009-12-01.18:00:00"
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Get the data for the given period as text/html (used for debugging purpose)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 getdataashtml(SessionID, _Env, Input) ->
 	{From,To} = parseInput(Input),
 	Data = queryDatabase(From,To),
 	mod_esi:deliver(SessionID, 
-		[
-			"Content-Type: text/html\r\n\r\n", 
+		[	"Content-Type: text/html\r\n\r\n", 
 			"<html><body><pre>",
 			Data,
-			"<pre></body></html>"
+			"<pre></body></html>" 
 		]).
-		
 	
-% Example: "http://localhost:8081/erl/aclog:getdata?from=2009-12-01.17:00:00&to=2009-12-01.18:00:00"
-% Input: "from=2009-12-01.17:00:00&to=2009-12-01.18:00:00"
-getdataasjs(SessionID, _Env, Input) ->
-	{From,To} = parseInput(Input),
-	Data = queryDatabase(From,To),
-%	io:format("Result of query:~p~n",[Data]),
-	mod_esi:deliver(SessionID, 
-		[
-			"Content-Type: text/html\r\n\r\n", 
-			"\r\nfunction GetData(){\r\n    return ",			
-			Data,
-			"\r\n}\r\n"			
-		]).
-		
 % Example: "http://localhost:8081/erl/aclog:printdb"
 printdb(SessionID, _Env, _Input) ->
 	Data = query_full_table(),
 	mod_esi:deliver(SessionID, 
-		[
-			"Content-Type: text/html\r\n\r\n", 
+		[	"Content-Type: text/html\r\n\r\n", 
 			"<html><body><pre>",
 			"\r\nfunction GetData(){\r\n    return ",			
 			Data,
 			"\r\n}\r\n"			
-			"<pre></body></html>"
+			"<pre></body></html>" 
 		]).
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Get the data for the given period as application/json. This is used via jQuery and flot
+% to update the plot area only, without reloading the whole page. Known as AJAX (should be called AJAJ ;-))
+% Example: "http://localhost:8081/erl/aclog:getdata?from=2009-12-01.17:00:00&to=2009-12-01.18:00:00"
+% Input: "from=2009-12-01.17:00:00&to=2009-12-01.18:00:00"
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 getdataasjson(SessionID, _Env, Input) ->
 	io:format("getdataasjson: Input = ~p  ~n",[Input]),
 	{From,To} = parseInput(Input),
 	Data = queryDatabase(From,To),
 	io:format("Result of query:~p~n",[Data]),
 	mod_esi:deliver(SessionID, 
-		[
-			"Content-Type: application/json\r\n\r\n",
-			"\r\{\r\n    data: ",			
+		[   "Content-Type: application/json\r\n\r\n",
+			"\r\{\r\n    data: ",
 			Data,
-			"\r\n}\r\n"			
+			"\r\n}\r\n"	
 		]).
