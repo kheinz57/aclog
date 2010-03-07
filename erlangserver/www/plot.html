@@ -1,0 +1,121 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<!--
+   Copyright 2010 Heinz Haeberle
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<html><head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Stromverbrauch</title>
+    <link href="basic-Dateien/layout.css" rel="stylesheet" type="text/css">
+    <link href="aclog.css" rel="stylesheet" type="text/css"  media="screen">
+    <!--[if IE]><script language="javascript" type="text/javascript" src="../excanvas.min.js"></script><![endif]-->
+    <script language="javascript" type="text/javascript" src="jquery.js"></script>
+    <script language="javascript" type="text/javascript" src="jquery.flot.js"></script>
+    <script language="javascript" type="text/javascript" src="basic-Dateien/jquery_002.js"></script>
+    <script language="javascript" type="text/javascript" src="basic-Dateien/jquery.js"></script>
+	<script src="datetimepicker/jquery_ui_datepicker/jquery_ui_datepicker.js" type="text/javascript"></script>
+	<script src="datetimepicker/jquery_ui_datepicker/i18n/ui.datepicker-de.js" type="text/javascript"></script>
+	<script src="datetimepicker/jquery_ui_datepicker/timepicker_plug/timepicker.js" type="text/javascript"></script>
+	<link rel="stylesheet" type="text/css" href="datetimepicker/jquery_ui_datepicker/timepicker_plug/css/style.css">
+	<link rel="stylesheet" type="text/css" href="datetimepicker/jquery_ui_datepicker/smothness/jquery_ui_datepicker.css">
+	</head><body>
+	<div id="container">
+		<ul class="buttons">
+			<li><strong>Stromverbrauch</strong></li>
+			<li><label>Von:</label></li>
+			<li><input id="datetimepickerfrom" type="text" value="2010-01-01 17:35:00" /></li>
+			<li><label>    Bis:</label></li>
+			<li><input id="datetimepickerto" type="text" value="2010-01-02 19:05:00" /></li>
+			<li><a id="getDataViaJSON" href="#"><span>Auswahl darstellen</span></a></li>
+			<li><a id="getDataViaJSONlast24Hours" href="#"><span>letzen 24 Stunden darstellen</span></a></li>
+		</ul>
+	</div>
+<!--	
+	<input class="button" id="getDataViaJSON" type="button" value="Auswahl darstellen" />
+	<input class="button" id="getDataViaJSONlast24Hours" type="button" value="24 Stunden darstellen" />
+-->
+    <div id="Canvas" style="width:1000px;height:700px;"></div>
+<strong>Zeit ist in CET!</strong>
+<script id="source" language="javascript" type="text/javascript">
+function clearPlotArea()
+	$.plot($("#Canvas"), 
+		[ { label: "kW",  data: []}]
+		, {
+		series: {
+			lines: { show: true },
+			points: { show: true }
+		},
+		yaxis:{min: 0},
+		xaxis: {
+			mode: "time",
+			timeformat: "%y-%m-%d %H:%M:%S"
+		},
+		grid: {
+			backgroundColor: { colors: ["#fff", "#eee"] }
+		}
+	});
+
+function plotdata(values){
+	$.plot($("#Canvas"), 
+		[ { label: "kW",  data: values}]
+		, {
+		series: {
+			lines: { show: true },
+			points: { show: true }
+		},
+		yaxis:{min: 0},
+		xaxis: {
+			mode: "time",
+			timeformat: "%y-%m-%d %H:%M:%S"
+		},
+		grid: {
+			backgroundColor: { colors: ["#fff", "#eee"] }
+		}
+	});
+}
+
+function loadData (ParamString){
+    $.getJSON("/erl/aclog:getdataasjson"+ParamString,function(data){
+	  plotdata(data.data);
+    });
+}
+
+$(function () {
+	//normalerweise werden hier einfach die letzten 24 Stunden geladen. Da ber die Abtastung grad nicht laeuft halt diese Zeit. Da gibt es zumindest Daten
+	loadData ("?from=2010-01-01.17:35:00&to=2010-01-02.19:05:00");
+    $("#getDataViaJSON").click(function () {
+		ParamString = "?from=" + $("#datetimepickerfrom").val() + "&to=" + $("#datetimepickerto").val();
+		ParamString = ParamString.replace(/ /g,".");
+		clearPlotArea();
+		loadData(ParamString);
+    });
+	$('#datetimepickerfrom').datetime({
+			userLang	: 'en',
+			americanMode: false,
+		});
+	$('#datetimepickerto').datetime({
+			userLang	: 'en',
+			americanMode: false,
+		});								
+    $("#bluebutton").click(function () {
+		loadData ("");
+    });
+
+    $("#getDataViaJSONlast24Hours").click(function () {
+		clearPlotArea();
+		loadData ("");
+    });
+});
+</script>
+ </body></html>

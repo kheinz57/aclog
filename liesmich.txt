@@ -1,0 +1,14 @@
+Vor einiger Zeit habe ich mir gedacht, dass es doch möglich sein muss einen normalen Ferraris Zähler per Lichtschranke abzutasten, die Daten per Internetverbindung zu einem  Server zu schicken und von dort per Webbrowser als Verbrauchskurve betrachten zu können.
+
+Ich wollte einfach sowas bauen ohne mich an EnBW zu binden. Auch wollte ich keinen Elektriker kommen lassen um einen 'intelligenten' Zähler einbauen zu lassen. Die Daten auch noch Google zur Verfügung zu stellen erzeugt bei mir auch ein mittleres Unbehagen. Dann habe ich eine konkrete Aufgabe zum Erlernen von Erlang gesucht und damit gefunden. (Als alter OCCAMler braucht man das '!')
+
+Deshalb habe ich das Projekt gemacht mit folgenden Mitteln:
+
+- Abtastung über Infrarot reflexlichtschranken
+- Auswertung dieses Signals mit einem sehr kleinen embedded Linux (ARM) board. Programmiert in Boost C++ mit der Möglichkeit einer SSL Verbindung
+- Angeschlossen an den DSL Router per ethernet
+- Erlang Datenserver läuft in einem günstigen V-Server. Dass die notwendige Datenbank dann Mnesia heisst war damit auch klar
+- Kommunikation zu dem Server über JSON
+- Die Client Seite ist mit iQuery und Flot zur Darstellung der Kurven gemacht (keine Server-Site-Bitmaps)
+
+Eigentlich möchte ich das embedded Linux Teil durch einen kleinen Controller (PIC oder ARM Cortex z.B.) ersetze

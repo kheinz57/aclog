@@ -1,0 +1,58 @@
+body {
+  background-image: url("images/stromzaehler.png");
+  margin: 5px;
+}
+input.button {
+        height: 20px;
+        width:160px;
+        font-family:Verdana,sans;
+        font-size:11px;
+        color: #FFFFFF;
+        border:none;
+        background-image: url(images/b200-16.gif);
+        cursor: pointer;
+ }
+a {
+	text-decoration:none; 
+}
+
+p {
+	margin:15px 0;
+}
+
+#container {
+	width:900px; 
+}
+
+#container ul {
+	padding: 5px
+}
+
+.back {
+	color:#0054a6;
+}
+
+.back:hover {
+}
+
+#container .buttons li {
+	display:inline; 
+	list-style:none; 
+	margin-right:1px;
+}
+
+#container .buttons li a {
+	background:#bbc; 
+	border:1px solid #ccc;
+	padding:3px 10px; 
+	-webkit-border-radius:10px;
+	-moz-border-radius:15px; 
+}
+
+#container .buttons li a:hover {
+	background:#5d9ddd;
+	border:1px solid #2a7ecd;
+	color:#fff;  
+	-webkit-border-radius:10px; 
+	-moz-border-radius:15px; 
+}
