@@ -12,7 +12,7 @@
 %   See the License for the specific language governing permissions and
 %   limitations under the License.
 -module(aclog).
--export([starthttp/0,starthttps/0,getdataashtml/3,getdataasjs/3,getdataasjson/3,logdata/3,initdb/3,initdbwithsamples/3,printdb/3,main/0,query_full_table/0]).
+-export([starthttp/0,starthttps/0,getdataashtml/3,getdataasjson/3,logdata/3,initdb/3,printdb/3,main/1,main/0,query_full_table/0,createsamples/3]).
 
 -include_lib("stdlib/include/qlc.hrl").
 % systime and remote time are stored as milliseconds since the epoch (1970-1-1 0:0:0)
@@ -75,7 +75,6 @@ setupDatabase() ->
 	mnesia:create_schema([node()]),
 	mnesia:start(),
 	mnesia:clear_table(aclog),
-	io:format("setupDatabase", []),
 	io:format("create_table()=~p~n",[mnesia:create_table(aclog, [ {disc_copies, [node()] },{attributes,record_info(fields,aclog)}])]),
 	io:format("setupDatabase done", []).
 	
@@ -84,8 +83,14 @@ setupDatabase() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 initDatabase() ->
 	mnesia:start(),
-	io:format("mnesia:wait_for_tables()=~p~n",[mnesia:wait_for_tables([aclog], 20000)]),
-	io:format("initDatabase done~n", []).
+	TableInitState = mnesia:wait_for_tables([aclog], 5000),
+	case  TableInitState of
+		ok ->
+			io:format("initDatabase done~n", []);
+		_  ->
+			io:format("mnesia:wait_for_tables()=~p~nsetting up database ...",[TableInitState]),
+			setupDatabase()
+	end.
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % create some sample data
@@ -197,12 +202,16 @@ query_full_table() ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % main routine. Since i am used to do C++ it had to be that way.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-main() ->
+main(_) ->
 	initDatabase(),
 	inets:start(),
 	aclog:starthttp(),
+%	aclog:starthttps(),
 	nil.
- 
+
+main() ->
+	main(x).
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Start up the http server
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

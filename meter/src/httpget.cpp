@@ -69,7 +69,7 @@ int httpgets(std::string server, std::string port, std::string path)
 		  socket.lowest_layer().close();
 		  socket.lowest_layer().connect(*endpoint_iterator++, error);
 #else
-		  socketclose();
+		  socket.close();
 		  socket.connect(*endpoint_iterator++, error);
 #endif
 		}

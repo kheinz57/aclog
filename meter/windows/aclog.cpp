@@ -33,7 +33,7 @@ void workThread(void)
 		boost::posix_time::ptime time_t_epoch(boost::gregorian::date(1970,1,1));
 		boost::posix_time::time_duration diff=t-time_t_epoch;
 		std::string server("localhost");
-		std::string port("8082");
+		std::string port("8081");
 		std::string s = str(format("hallo %1%") % 10);
 		std::string path = str(format("/erl/aclog:logdata?&time=%1%&turns=1") % static_cast<unsigned long long>(diff.total_milliseconds()));
 		while(0 != httpgets(server,port,path)){
