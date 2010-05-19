@@ -12,7 +12,7 @@
 %   See the License for the specific language governing permissions and
 %   limitations under the License.
 -module(aclog).
--export([starthttp/0,starthttps/0,getdataashtml/3,getdataasjson/3,logdata/3,initdb/3,printdb/3,main/1,main/0,query_full_table/0,createsamples/3]).
+-export([starthttp/0,starthttps/0,getdataashtml/3,getdataasjson/3,logdata/3,vz/3,initdb/3,printdb/3,main/1,main/0,query_full_table/0,createsamples/3]).
 
 -include_lib("stdlib/include/qlc.hrl").
 % systime and remote time are stored as milliseconds since the epoch (1970-1-1 0:0:0)
@@ -298,6 +298,21 @@ logdata(SessionID, _Env, Input) ->
 		[   "Content-Type: text/html\r\n\r\n", 
 			"<html><body><pre>Entry added</pre></body></html>" 
 		]).
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% This is the url used by the volkszaehler meter
+%
+% Example URL: "http://localhost:8081/erl/aclog:vz?port=1&time=560" 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+vz(SessionID, _Env, Input) ->
+	["port","0", "time",TimeString] = string:tokens(Input,"=&"),
+%	{Time,_} = string:to_integer(TimeString),
+%	{Turns,_} = string:to_integer(TurnsString),
+	addEntry(getActTimeUTC(),1),
+	mod_esi:deliver(SessionID, 
+		[   "Content-Type: text/html\r\n\r\n", 
+			"<html><body><pre>Entry added</pre></body></html>" 
+		]).
+
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Does parse the 'get' parameters from the GUI

@@ -45,8 +45,7 @@
 	<input class="button" id="getDataViaJSON" type="button" value="Auswahl darstellen" />
 	<input class="button" id="getDataViaJSONlast24Hours" type="button" value="24 Stunden darstellen" />
 -->
-    <div id="Canvas" style="width:1000px;height:700px;"></div>
-<strong>Zeit ist in CET!</strong>
+    <div id="Canvas" style="width:1000px;height:600px;"></div>
 <script id="source" language="javascript" type="text/javascript">
 function clearPlotArea()
 	$.plot($("#Canvas"), 
@@ -66,6 +65,8 @@ function clearPlotArea()
 		}
 	});
 
+d = new Date();
+timeOffset = d.getTimezoneOffset() * 60*1000*(-1);
 function plotdata(values){
 	$.plot($("#Canvas"), 
 		[ { label: "kW",  data: values}]
@@ -76,6 +77,8 @@ function plotdata(values){
 		},
 		yaxis:{min: 0},
 		xaxis: {
+                        //transform: function (v) {return v-timeOffset;},
+                        //inverseTransform: function (v) {return v+timeOffset;},
 			mode: "time",
 			timeformat: "%y-%m-%d %H:%M:%S"
 		},
@@ -83,11 +86,16 @@ function plotdata(values){
 			backgroundColor: { colors: ["#fff", "#eee"] }
 		}
 	});
+        setTimeout(function(){loadData(""); },10000);
 }
-
 function loadData (ParamString){
     $.getJSON("/erl/aclog:getdataasjson"+ParamString,function(data){
-	  plotdata(data.data);
+          var values= new Array();
+	  for( i=0;i<data.data.length;i++){
+              values.push([data.data[i][0] + timeOffset,data.data[i][1]*1000]);
+          }
+	  plotdata(values);
+//         plotdata(data.data);
     });
 }
 
