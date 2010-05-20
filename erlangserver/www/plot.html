@@ -45,7 +45,7 @@
 	<input class="button" id="getDataViaJSON" type="button" value="Auswahl darstellen" />
 	<input class="button" id="getDataViaJSONlast24Hours" type="button" value="24 Stunden darstellen" />
 -->
-    <div id="Canvas" style="width:1000px;height:600px;"></div>
+    <div id="Canvas" style="width:1000px;height:700px;"></div>
 <script id="source" language="javascript" type="text/javascript">
 function clearPlotArea()
 	$.plot($("#Canvas"), 
@@ -92,7 +92,7 @@ function loadData (ParamString){
     $.getJSON("/erl/aclog:getdataasjson"+ParamString,function(data){
           var values= new Array();
 	  for( i=0;i<data.data.length;i++){
-              values.push([data.data[i][0] + timeOffset,data.data[i][1]*1000]);
+              values.push([data.data[i][0] + timeOffset,data.data[i][1]]);
           }
 	  plotdata(values);
 //         plotdata(data.data);
