@@ -146,7 +146,7 @@ calcDiff(PreviousTime, List, Accu) ->
 	DiffTime = ActTime - PreviousTime,
 	if
 		DiffTime < 2000 ->
-			io:format("ActTime=~p  Diff: ~p~n",[ActTime,DiffTime]),
+%			io:format("ActTime=~p  Diff: ~p~n",[ActTime,DiffTime]),
 			calcDiff(ActTime, T, Accu);
 		true ->
 			AccuNew = Accu ++ [{DiffTime,ActTime,H#aclog.turns}],
@@ -168,11 +168,10 @@ makeJSList(DiffList, Accu) ->
 %sumEntries(Entry, {}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% In case of to many datapoints for the web page (it does not help to send more data
+% In case of too many datapoints for the web page (it does not help to send more data
 % to the browser as there are horizontal pixels)
 % this is an optimization not done yet
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-	
 reduceList(LongList) ->
 	LongList.
 	
@@ -183,12 +182,13 @@ queryDatabase(QueryStartTime, QueryEndTime) ->
 	UnsortedList = do(qlc:q([X || X <- mnesia:table(aclog),(X#aclog.remotetime >= QueryStartTime), (X#aclog.remotetime < QueryEndTime) ])),
 	LongList=lists:sort(fun(A, B) -> A#aclog.remotetime =< B#aclog.remotetime end, UnsortedList),
 	List = reduceList(LongList),
+%	io:format("[~s]",[LongList]),
 	[H|T] = List,
 	StartTime = H#aclog.remotetime,
 	DiffList = calcDiff(StartTime, T,[]),
 	DataList = makeJSList(DiffList,[]),
 	[_|DataListJS] = lists:flatten([io_lib:format(",[~B,~f]",[X,Y]) || {X,Y}<-DataList]),
-	io:format("[~s]",[DataListJS]),
+%	io:format("[~s]",[DataListJS]),
 	io_lib:format("[~s]",[DataListJS]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -216,21 +216,36 @@ main() ->
 % Start up the http server
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 starthttp() ->
+    inets:start(httpd, [
+        {modules, [mod_esi,mod_get, mod_log, mod_disk_log,mod_auth]},
+        {port,8081},
+        {server_name,"aclog"},
+        {server_root,"log"},
+        {document_root,"www"},
+        {directory_index, ["index.hml", "index.htm"]},
+        {erl_script_alias, {"/erl", [aclog]}},
+        {error_log, "error.log"},
+        {security_log, "security.log"},
+        {transfer_log, "transfer.log"},
+        {mime_types,[ {"html","text/html"}, {"css","text/css"},
+                    {"js","application/x-javascript"},{"json","application/json"}]}
+        ]),
+    io:format("http 8081 start done~n", []),
  inets:start(httpd, [
-	  {modules, [mod_esi,mod_get, mod_log, mod_disk_log,mod_auth]},
-	  {port,8081},
-	  {server_name,"aclog"},
-	  {server_root,"log"},
-	  {document_root,"www"},
-	  {directory_index, ["index.hml", "index.htm"]},
-	  {erl_script_alias, {"/erl", [aclog]}},
-	  {error_log, "error.log"},
-	  {security_log, "security.log"},
-	  {transfer_log, "transfer.log"},
-	  {mime_types,[ {"html","text/html"}, {"css","text/css"},
-					{"js","application/x-javascript"},{"json","application/json"}]}
-	 ]),
- 	io:format("http start done~n", []).
+        {modules, [mod_esi,mod_get, mod_log, mod_disk_log,mod_auth]},
+        {port,4711},
+        {server_name,"aclog"},
+        {server_root,"log"},
+        {document_root,"www"},
+        {directory_index, ["index.hml", "index.htm"]},
+        {erl_script_alias, {"/erl", [aclog]}},
+        {error_log, "error_80.log"},
+        {security_log, "security_80.log"},
+        {transfer_log, "transfer_80.log"},
+        {mime_types,[ {"html","text/html"}, {"css","text/css"},
+                    {"js","application/x-javascript"},{"json","application/json"}]}
+        ]),
+ 	io:format("http 80 start done~n", []).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Start up the https server
@@ -328,6 +343,11 @@ parseInput(Input) ->
 		["from",FromStr,_] ->
 			From = stringToMillisecondsSinceEpoch(FromStr),
 			To = From + (?HOURINMS * 24);
+		["lasthours",LastHours] ->
+			To = getActTimeUTC(),
+            Hours = list_to_integer(LastHours),
+%            {Hours,_} string:to_integer(LastHours),
+			From = To - (?HOURINMS * Hours);
 		[] -> 	
 			To = getActTimeUTC(),
 			From = To - (?HOURINMS * 24)
@@ -373,7 +393,7 @@ getdataasjson(SessionID, _Env, Input) ->
 	io:format("Result of query:~p~n",[Data]),
 	mod_esi:deliver(SessionID, 
 		[   "Content-Type: application/json\r\n\r\n",
-			"\r\{\r\n    data: ",
+			"\r\{\r\n    \"data\": ",
 			Data,
 			"\r\n}\r\n"	
 		]).

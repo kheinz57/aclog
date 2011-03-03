@@ -32,82 +32,79 @@
 	</head><body>
 	<div id="container">
 		<ul class="buttons">
-			<li><strong>Stromverbrauch</strong></li>
+<!--			<li><strong>Stromverbrauch</strong></li> -->
 			<li><label>Von:</label></li>
 			<li><input id="datetimepickerfrom" type="text" value="2010-01-01 17:35:00" /></li>
 			<li><label>    Bis:</label></li>
 			<li><input id="datetimepickerto" type="text" value="2010-01-02 19:05:00" /></li>
 			<li><a id="getDataViaJSON" href="#"><span>Auswahl darstellen</span></a></li>
-			<li><a id="getDataViaJSONlast24Hours" href="#"><span>letzen 24 Stunden darstellen</span></a></li>
+			<li><a id="getDataViaJSONlast24Hours" href="#"><span>24 Stunden</span></a></li>
+			<li><a id="getDataViaJSONlast6Hours" href="#"><span>6 Stunden</span></a></li>
+			<li><a id="getDataViaJSONlastHour" href="#"><span>1 Stunde</span></a></li>
 		</ul>
 	</div>
 <!--	
 	<input class="button" id="getDataViaJSON" type="button" value="Auswahl darstellen" />
 	<input class="button" id="getDataViaJSONlast24Hours" type="button" value="24 Stunden darstellen" />
 -->
-    <div id="Canvas" style="width:1000px;height:700px;"></div>
+<!--    <div id="Canvas" style="width:1000px;height:600px;"></div> -->
+    <div id="Canvas" style="width:800px;height:450px;"></div>
 <script id="source" language="javascript" type="text/javascript">
-function clearPlotArea()
-	$.plot($("#Canvas"), 
-		[ { label: "kW",  data: []}]
-		, {
-		series: {
-			lines: { show: true },
-			points: { show: true }
-		},
-		yaxis:{min: 0},
-		xaxis: {
-			mode: "time",
-			timeformat: "%y-%m-%d %H:%M:%S"
-		},
-		grid: {
-			backgroundColor: { colors: ["#fff", "#eee"] }
-		}
-	});
 
 d = new Date();
+PlotRange ="";
 timeOffset = d.getTimezoneOffset() * 60*1000*(-1);
-function plotdata(values){
-	$.plot($("#Canvas"), 
-		[ { label: "kW",  data: values}]
-		, {
-		series: {
-			lines: { show: true },
-			points: { show: true }
-		},
-		yaxis:{min: 0},
-		xaxis: {
-                        //transform: function (v) {return v-timeOffset;},
-                        //inverseTransform: function (v) {return v+timeOffset;},
-			mode: "time",
-			timeformat: "%y-%m-%d %H:%M:%S"
-		},
-		grid: {
-			backgroundColor: { colors: ["#fff", "#eee"] }
-		}
-	});
-        setTimeout(function(){loadData(""); },10000);
+var options = {
+    series: {
+        lines: { show: true },
+        points: { show: true }
+    },
+    yaxis:{min: 0},
+    xaxis: {
+        mode: "time",
+        timeformat: "%y-%m-%d %H:%M:%S"
+    },
+    grid: {
+        backgroundColor: { colors: ["#fff", "#eee"] }
+    }
+};
+
+function clearPlotArea(){
+    var data = [{ data: [], label: "Watt"}];
+    $.plot($("#Canvas"), data, options);
 }
-function loadData (ParamString){
-    $.getJSON("/erl/aclog:getdataasjson"+ParamString,function(data){
+
+function plotdata(values){
+    var data = [{ data: values, label: "kW"}];
+    $.plot($("#Canvas"), data, options);
+}
+function loadData (){
+    clearPlotArea();
+    $.getJSON("/erl/aclog:getdataasjson"+PlotRange,function(data){
           var values= new Array();
 	  for( i=0;i<data.data.length;i++){
               values.push([data.data[i][0] + timeOffset,data.data[i][1]]);
           }
-	  plotdata(values);
-//         plotdata(data.data);
+         plotdata(values);
+	  if (PlotRange.length == 0){
+            setTimeout(function(){loadData(); },30000);
+         }
     });
 }
 
 $(function () {
 	//normalerweise werden hier einfach die letzten 24 Stunden geladen. Da ber die Abtastung grad nicht laeuft halt diese Zeit. Da gibt es zumindest Daten
-//	loadData ("?from=2010-01-01.17:35:00&to=2010-01-02.19:05:00");
-	loadData ("");
+//	loadData ("?from=2010-06-01.15:30:00:00&to=2010-06-01.17:00:00");
+//	PlotRange  ="?from=2010-06-01.15:30:00&to=2010-06-01.17:00:00";
+//	PlotRange  ="?from=2011-02-10.22:00:00&to=2011-02-10.23:20:00";
+//	PlotRange  ="?lasthours=1"
+	PlotRange  =""
+	loadData ();
     $("#getDataViaJSON").click(function () {
 		ParamString = "?from=" + $("#datetimepickerfrom").val() + "&to=" + $("#datetimepickerto").val();
 		ParamString = ParamString.replace(/ /g,".");
-		clearPlotArea();
-		loadData(ParamString);
+		PlotRange=ParamString;
+		loadData();
     });
 	$('#datetimepickerfrom').datetime({
 			userLang	: 'en',
@@ -122,8 +119,16 @@ $(function () {
     });
 
     $("#getDataViaJSONlast24Hours").click(function () {
-		clearPlotArea();
-		loadData ("");
+		PlotRange  ="";
+		loadData ();
+    });
+    $("#getDataViaJSONlast6Hours").click(function () {
+		PlotRange  ="?lasthours=6";
+		loadData ();
+    });
+    $("#getDataViaJSONlastHour").click(function () {
+		PlotRange  ="?lasthours=1";
+		loadData ();
     });
 });
 </script>
