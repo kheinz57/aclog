@@ -92,7 +92,7 @@ function loadDataGas (){
     });
 }
 function simulateGasMeter(){
-    $.get("/erl/aclog:vz?port=0&time=1819007");
+    $.get("/erl/aclog:vz?port=1&time=1819007");
     var sleeptime = 2000 + Math.floor(Math.random()*2000)
     setTimeout( function() {simulateGasMeter(); }, sleeptime);
 }
@@ -113,10 +113,10 @@ $(function () {
 //	PlotRange  ="?lasthours=1"
     PlotRange  ="?lastminutes=5"
 //	PlotRange  =""
-//	loadDataAC ();
+	loadDataAC ();
     loadDataGas();
-//    simulateGasMeter();
-//    simulateACMeter();
+    simulateGasMeter();
+    simulateACMeter();
 });
 </script>
  </body></html>
