@@ -12,14 +12,21 @@
 %   See the License for the specific language governing permissions and
 %   limitations under the License.
 -module(aclog).
--export([starthttp/0,starthttps/0,getdataashtml/3,getdataasjson/3,logdata/3,vz/3,initdb/3,printdb/3,main/1,main/0,query_full_table/0,createsamples/3]).
+-export([starthttp/0,getdataasjson/3,vz/3,initdb/3,printdb/3,main/1,main/0,createsamples/3]). %query_full_table/0,
+-export([getacdata/3,getgasdata/3,getacdataashtml/3,getgasdataashtml/3,getdataashtml/3]).
+% I do not know why this is required. They are used in exported functions 
+% but still get marked by the compiler as unused??
+-export ([calcCubicMetersPerHour/2,calcKiloWatts/2]). 
 
 -include_lib("stdlib/include/qlc.hrl").
 % systime and remote time are stored as milliseconds since the epoch (1970-1-1 0:0:0)
--record(aclog, {systime,remotetime,turns}).
+-record(logstruct, {systime,remotetime,turns}).
 
 -define(TURNSPERKWH,75). % how many turns per kWh. Is specific for the used meter
--define(HOURINMS, 3600000). 
+-define(TURNSPERCUBICMETER,100). % how many turns per cubic meter. Is specific for the used meter.
+-define(HOURINMS, 3600000).
+-define(MINUTESINMS, 60000).
+ 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % management stuff
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -58,16 +65,32 @@ calcKiloWattHours(Turns) ->
 	(Turns / ?TURNSPERKWH).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% calc th power (Energy/time) for the given turns and diff time in ms
+% calc the power (Energy/time) for the given turns and diff time in ms
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 calcKiloWatts(DiffTimeInMS, Turns) ->
 	KiloWattHours = calcKiloWattHours(Turns),
 	Hours = DiffTimeInMS / (3600000),
 	KiloWattHours / Hours.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% each turn (= one turne of the ferraris meter for example) is a specific amount 
+% of energy. Use the TURNSPERKWH (defined above) to calc the energy of one turn
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+    % one turn is 0.01 m2 gas
+calcCubicMeter(Turns) -> 
+    (Turns / ?TURNSPERCUBICMETER).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% calc the gas volume per time for the given turns and diff time in ms
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+calcCubicMetersPerHour(DiffTimeInMS, Turns) ->
+	CubicMeter = calcCubicMeter(Turns),
+	Hours = DiffTimeInMS / (3600000),
+	CubicMeter / Hours.
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% set up the database and creta ethe table aclog 
-% it will bestored on disk and without a replication
+% set up the database and create the table aclog 
+% it will be stored on disk and without a replication
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 setupDatabase() ->
 	mnesia:stop(),
@@ -75,8 +98,26 @@ setupDatabase() ->
 	mnesia:create_schema([node()]),
 	mnesia:start(),
 	mnesia:clear_table(aclog),
-	io:format("create_table()=~p~n",[mnesia:create_table(aclog, [ {disc_copies, [node()] },{attributes,record_info(fields,aclog)}])]),
-	io:format("setupDatabase done", []).
+    Result = mnesia:create_table(aclog, [ 
+        {disc_copies, [node()] },
+        {record_name, logstruct},
+        {attributes,record_info(fields,logstruct)}
+    ]),
+	io:format("create_table()=~p~n",[Result]),
+	io:format("setupDatabase done~n", []).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% add the gaslog table to the database 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+addDatabaseTableGas() ->
+	mnesia:clear_table(gaslog),
+    Result = mnesia:create_table(gaslog, [ 
+        {disc_copies, [node()] },
+        {record_name, logstruct},
+        {attributes,record_info(fields,logstruct)}
+    ]),
+	io:format("create_table(gaslog)=~p~n",[Result]),
+	io:format("addDatabaseTableGas done", []).
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % start database and connect to a - hopefully - existing table
@@ -86,10 +127,18 @@ initDatabase() ->
 	TableInitState = mnesia:wait_for_tables([aclog], 5000),
 	case  TableInitState of
 		ok ->
-			io:format("initDatabase done~n", []);
+			io:format("initDatabase aclog done~n", []);
 		_  ->
-			io:format("mnesia:wait_for_tables()=~p~nsetting up database ...",[TableInitState]),
+			io:format("mnesia:wait_for_tables(aclog)=~p~nsetting up database ...",[TableInitState]),
 			setupDatabase()
+	end,
+	TableInitStateGas = mnesia:wait_for_tables([gaslog], 5000),
+	case  TableInitStateGas of
+		ok ->
+			io:format("initDatabase for gas done~n", []);
+		_  ->
+			io:format("mnesia:wait_for_tables(gaslog)=~p~nadding table to database ...",[TableInitState]),
+			addDatabaseTableGas()
 	end.
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -99,7 +148,7 @@ fillTable(List, _Time, 0) -> List;
 fillTable(List, Time, Elements) ->
 	Time1 = Time  + 1 + random:uniform(150),
 	Time2 = (Time1  * 1000) + random:uniform(1000),
-	Entry = #aclog{systime=Time1*1000,remotetime=Time2,turns=1},
+	Entry = #logstruct{systime=Time1*1000,remotetime=Time2,turns=1},
 	List1 = List ++ [Entry],
 	fillTable(List1,Time1, Elements-1).
 
@@ -107,7 +156,7 @@ createSampleData(Entries)->
 	Dt = calendar:local_time(),
 	GregorianSeconds = calendar:datetime_to_gregorian_seconds(Dt)-719528*24*3600,
 	Table = fillTable([],GregorianSeconds,Entries),
-	F = fun() -> lists:foreach(fun mnesia:write/1, Table) end,
+	F = fun() -> lists:foreach(fun mnesia:write/3, aclog, Table, write) end,
 	{atomic,_Result} = mnesia:transaction(F),
 	nil.
 
@@ -115,16 +164,17 @@ createSampleData(Entries)->
 % Adds a new entry. Usually called by the http 'servlet' handler used by the meter connected
 % to the powerline or watches the ferraris meter's turns 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-addEntry(Time, Turns)->
-	io:format("addentry(~p,~p)~n",[Time, Turns]),
+addEntry(Time, Turns, Table)->
+	io:format("addentry(~p,~p,~p)~n",[Time, Turns, Table]),
 	Servertime=getActTimeUTC(),
-%	1000*(calendar:datetime_to_gregorian_seconds(calendar:now_to_universal_time( now()))-719528*24*3600),
 	io:format("Servertime=~p~n",[Servertime]),
-	Entry = #aclog{systime=Servertime,remotetime=Time,turns=Turns},
+	Entry = #logstruct{systime=Servertime,remotetime=Time,turns=Turns},
 	io:format("Entry=~p~n",[Entry]),
-	F = fun() -> mnesia:write(Entry) end,
-	{atomic,_Result} = mnesia:transaction(F),
-	io:format("Result: ~p~n",[_Result]),
+	F = fun() -> mnesia:write(Table, Entry, write) end,
+    Res = mnesia:transaction(F),
+	io:format("Res: ~p~n",[Res]),
+	{atomic,Result} = Res,
+	io:format("Result: ~p~n",[Result]),
 	nil.
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -142,28 +192,33 @@ calcDiff(_PreviousTime, [], Accu) ->
 
 calcDiff(PreviousTime, List, Accu) ->
 	[H|T] = List,
-	ActTime = H#aclog.remotetime,
+	ActTime = H#logstruct.remotetime,
 	DiffTime = ActTime - PreviousTime,
 	if
 		DiffTime < 2000 ->
 %			io:format("ActTime=~p  Diff: ~p~n",[ActTime,DiffTime]),
 			calcDiff(ActTime, T, Accu);
 		true ->
-			AccuNew = Accu ++ [{DiffTime,ActTime,H#aclog.turns}],
+			AccuNew = Accu ++ [{DiffTime,ActTime,H#logstruct.turns}],
 			calcDiff(ActTime, T, AccuNew)
 	end.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Make a Java Script (JSON) List
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-makeJSList([], Accu) -> Accu;
+makeJSList(_ConversionFunction, [], Accu) -> Accu;
 
-makeJSList(DiffList, Accu) -> 
+makeJSList(ConversionFunction,DiffList, Accu) -> 
+%    io:format("makeJSList ~p ~p ~p ~n",[ConversionFunction,DiffList, Accu]),
 	[H|Rest]=DiffList,
+%    io:format("H,Rest= ~p,~p ~n",[H,Rest]),
 	{Diff, Time,Turns} = H,
-	DataPair = {Time,calcKiloWatts(Diff,Turns)},
+%    io:format("Diff, Time,Turns= ~p,~p,~p ~n",[Diff, Time,Turns]),
+	DataPair = {Time,ConversionFunction(Diff,Turns)},
+%    io:format("DataPair= ~p ~n",[DataPair]),
 	AccuNew = Accu++[DataPair],
- 	makeJSList(Rest, AccuNew).
+%    io:format("in makeJSList ~p ~p ~p ~n",[ConversionFunction,Rest, AccuNew]),
+ 	makeJSList(ConversionFunction,Rest, AccuNew).
 
 %sumEntries(Entry, {}
 
@@ -178,25 +233,34 @@ reduceList(LongList) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Get the data for the given interval and return the date as a JSON struct/list
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-queryDatabase(QueryStartTime, QueryEndTime) ->
-	UnsortedList = do(qlc:q([X || X <- mnesia:table(aclog),(X#aclog.remotetime >= QueryStartTime), (X#aclog.remotetime < QueryEndTime) ])),
-	LongList=lists:sort(fun(A, B) -> A#aclog.remotetime =< B#aclog.remotetime end, UnsortedList),
+queryDatabase(QueryStartTime, QueryEndTime, Table, ConversionFunction) ->
+    io:format("queryDatabase ~p ~p~n",[Table,ConversionFunction]),
+	UnsortedList = do(qlc:q([X || X <- mnesia:table(Table),(X#logstruct.remotetime >= QueryStartTime), (X#logstruct.remotetime < QueryEndTime)])),
+%    io:format("LUnsortedlist=~p~n",[LUnsortedList]),
+%    {UnsortedList,_} = lists:split(10,LUnsortedList),
+%    io:format("Unsortedlist=~p~n",[UnsortedList]),
+	LongList=lists:sort(fun(A, B) -> A#logstruct.remotetime =< B#logstruct.remotetime end, UnsortedList),
+%    io:format("LongList=~p~n",[LongList]),
 	List = reduceList(LongList),
-%	io:format("[~s]",[LongList]),
+%	io:format("List=~p~n",[List]),
 	[H|T] = List,
-	StartTime = H#aclog.remotetime,
+%    io:format("H=~p~n",[H]),
+%    io:format("T=~p~n",[T]),
+	StartTime = H#logstruct.remotetime,
 	DiffList = calcDiff(StartTime, T,[]),
-	DataList = makeJSList(DiffList,[]),
+%    io:format("Difflist=~p~n",[DiffList]),
+	DataList = makeJSList(ConversionFunction,DiffList,[]),
+%    io:format("DataList=~p~n",[DataList]),
 	[_|DataListJS] = lists:flatten([io_lib:format(",[~B,~f]",[X,Y]) || {X,Y}<-DataList]),
-%	io:format("[~s]",[DataListJS]),
+	io:format("[~s]",[DataListJS]),
 	io_lib:format("[~s]",[DataListJS]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% get all date
+% get all data of given table
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-query_full_table() ->
-	RandomList = do(qlc:q([X || X <- mnesia:table(aclog)])),
-	List=lists:sort(fun(A, B) -> A#aclog.remotetime =< B#aclog.remotetime end, RandomList),
+query_full_table(Table) ->
+	RandomList = do(qlc:q([X || X <- mnesia:table(Table)])),
+	List=lists:sort(fun(A, B) -> A#logstruct.remotetime =< B#logstruct.remotetime end, RandomList),
 	io_lib:format("query result:~p~n",[List]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -206,7 +270,6 @@ main(_) ->
 	initDatabase(),
 	inets:start(),
 	aclog:starthttp(),
-%	aclog:starthttps(),
 	nil.
 
 main() ->
@@ -218,7 +281,7 @@ main() ->
 starthttp() ->
     inets:start(httpd, [
         {modules, [mod_esi,mod_get, mod_log, mod_disk_log,mod_auth]},
-        {port,8081},
+        {port,4715},
         {server_name,"aclog"},
         {server_root,"log"},
         {document_root,"www"},
@@ -230,47 +293,7 @@ starthttp() ->
         {mime_types,[ {"html","text/html"}, {"css","text/css"},
                     {"js","application/x-javascript"},{"json","application/json"}]}
         ]),
-    io:format("http 8081 start done~n", []),
- inets:start(httpd, [
-        {modules, [mod_esi,mod_get, mod_log, mod_disk_log,mod_auth]},
-        {port,4711},
-        {server_name,"aclog"},
-        {server_root,"log"},
-        {document_root,"www"},
-        {directory_index, ["index.hml", "index.htm"]},
-        {erl_script_alias, {"/erl", [aclog]}},
-        {error_log, "error_80.log"},
-        {security_log, "security_80.log"},
-        {transfer_log, "transfer_80.log"},
-        {mime_types,[ {"html","text/html"}, {"css","text/css"},
-                    {"js","application/x-javascript"},{"json","application/json"}]}
-        ]),
- 	io:format("http 80 start done~n", []).
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% Start up the https server
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-starthttps() ->
-  inets:start(httpd, [
-	  {modules, [mod_esi,mod_get, mod_log, mod_disk_log]},
-	  {port,8082},
-	  {server_name,"aclog"},
-	  {server_root,"logssl"},
-	  {document_root,"www"},
-	  {socket_type,ssl},
-	  {ssl_verify_client, 0},
-	  {ssl_certificate_key_file,"ssl.key"},
-	  {ssl_certificate_file, "ssl.crt"},
-	  {directory_index, ["index.hml", "index.htm"]},
-	  {erl_script_alias, {"/erl", [aclog]}},
-	  {error_log, "error.log"},
-	  {security_log, "security.log"},
-	  {transfer_log, "transfer.log"},
-	  {mime_types,[ {"html","text/html"},{"css","text/css"},
-					{"js","application/x-javascript"},{"json","application/json"}]}
-	 ]),
- 	io:format("https start done~n", []).
-
+    io:format("http 4715 start done~n", []).
  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Servlet (erl_script_alias / mod_esi)
@@ -296,33 +319,24 @@ createsamples(SessionID, _Env, _Input) ->
 		]).
 		
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% This is the url used by the meter - usually a small controller attached to a ferraris
-% or other smart meter
-%
-% This should be changed to POST, because GET - according to CRUD - should not modify  
-% anything on the server side (side effect free)
-% Example URL: "http://localhost:8081/erl/aclog:logdata?systime=1&remotetime=2&turns=3" 
-% Input: "logdata?remotetime=2&turns=3" 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-logdata(SessionID, _Env, Input) ->
-	["time",TimeString, "turns",TurnsString] = string:tokens(Input,"=&"),
-	{Time,_} = string:to_integer(TimeString),
-	{Turns,_} = string:to_integer(TurnsString),
-	addEntry(Time,Turns),
-	mod_esi:deliver(SessionID, 
-		[   "Content-Type: text/html\r\n\r\n", 
-			"<html><body><pre>Entry added</pre></body></html>" 
-		]).
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % This is the url used by the volkszaehler meter
 %
 % Example URL: "http://localhost:8081/erl/aclog:vz?port=1&time=560" 
+%
+% This should be changed to POST, because GET - according to CRUD - should not modify  
+% anything on the server side (side effect free)
+% Example URL: "http://localhost:8081/erl/aclog:vz?port=0&time=1243" 
+% Input: "logdata?remotetime=2&turns=3" 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 vz(SessionID, _Env, Input) ->
-	["port","0", "time",TimeString] = string:tokens(Input,"=&"),
-%	{Time,_} = string:to_integer(TimeString),
-%	{Turns,_} = string:to_integer(TurnsString),
-	addEntry(getActTimeUTC(),1),
+	io:format("vz Input:~p~n",[Input]),
+	["port",Port, "time",_TimeString] = string:tokens(Input,"=&"),
+	io:format("vz Input:~p~n",[Input]),
+	case  Port of
+		"0" -> addEntry(getActTimeUTC(),1, aclog);
+		"1" -> addEntry(getActTimeUTC(),1, gaslog)
+	end,
+    io:format("addentry done ~n",[]),
 	mod_esi:deliver(SessionID, 
 		[   "Content-Type: text/html\r\n\r\n", 
 			"<html><body><pre>Entry added</pre></body></html>" 
@@ -346,8 +360,11 @@ parseInput(Input) ->
 		["lasthours",LastHours] ->
 			To = getActTimeUTC(),
             Hours = list_to_integer(LastHours),
-%            {Hours,_} string:to_integer(LastHours),
 			From = To - (?HOURINMS * Hours);
+		["lastminutes",LastMinutes] ->
+			To = getActTimeUTC(),
+            Hours = list_to_integer(LastMinutes),
+			From = To - (?MINUTESINMS * Hours);
 		[] -> 	
 			To = getActTimeUTC(),
 			From = To - (?HOURINMS * 24)
@@ -355,30 +372,43 @@ parseInput(Input) ->
 	io:format("From:~p  To:~p~n",[From,To]),
 	{From,To}.
 
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% Get the data for the given period as text/html (used for debugging purpose)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-getdataashtml(SessionID, _Env, Input) ->
-	{From,To} = parseInput(Input),
-	Data = queryDatabase(From,To),
-	mod_esi:deliver(SessionID, 
-		[	"Content-Type: text/html\r\n\r\n", 
-			"<html><body><pre>",
-			Data,
-			"<pre></body></html>" 
-		]).
-	
 % Example: "http://localhost:8081/erl/aclog:printdb"
 printdb(SessionID, _Env, _Input) ->
-	Data = query_full_table(),
+	Datagas = query_full_table(gaslog),
+	Dataac = query_full_table(qclog),
 	mod_esi:deliver(SessionID, 
 		[	"Content-Type: text/html\r\n\r\n", 
 			"<html><body><pre>",
-			"\r\nfunction GetData(){\r\n    return ",			
-			Data,
+			"\r\nTable GAS{\r\n    return ",			
+			Datagas, 
+			"\r\n}\r\n"			
+			"\r\nTable aclog{\r\n    return ",			
+			Dataac, 
 			"\r\n}\r\n"			
 			"<pre></body></html>" 
 		]).
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Get the data for the given period as text/html (used for debugging purpose)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+getdataashtml(SessionID, _Env, Input, Table, ConversionFunction) ->
+	{From,To} = parseInput(Input),
+	Data = queryDatabase(From,To, Table, ConversionFunction),
+	mod_esi:deliver(SessionID, 
+		[	"Content-Type: text/html\r\n\r\n", 
+			"<html><body><pre>",
+			Data,
+			"<pre></body></html>" 
+		]).
+
+getdataashtml(SessionID, Env, Input) ->
+    getacdataashtml(SessionID, Env, Input).
+    
+getacdataashtml(SessionID, Env, Input) -> 
+    getdataashtml(SessionID, Env, Input, aclog, calcKiloWatts).
+
+getgasdataashtml(SessionID, Env, Input) -> 
+    getdataashtml(SessionID, Env, Input, gaslog, calcCubicMetersPerHour).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Get the data for the given period as application/json. This is used via jQuery and flot
@@ -386,10 +416,10 @@ printdb(SessionID, _Env, _Input) ->
 % Example: "http://localhost:8081/erl/aclog:getdata?from=2009-12-01.17:00:00&to=2009-12-01.18:00:00"
 % Input: "from=2009-12-01.17:00:00&to=2009-12-01.18:00:00"
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-getdataasjson(SessionID, _Env, Input) ->
+getdataasjson(SessionID, _Env, Input, Table, ConversionFunction) ->
 	io:format("getdataasjson: Input = ~p  ~n",[Input]),
 	{From,To} = parseInput(Input),
-	Data = queryDatabase(From,To),
+	Data = queryDatabase(From,To,Table, ConversionFunction),
 	io:format("Result of query:~p~n",[Data]),
 	mod_esi:deliver(SessionID, 
 		[   "Content-Type: application/json\r\n\r\n",
@@ -397,3 +427,13 @@ getdataasjson(SessionID, _Env, Input) ->
 			Data,
 			"\r\n}\r\n"	
 		]).
+
+%deprecated. Use getacdata instead
+getdataasjson(SessionID, Env, Input) -> 
+    getacdata(SessionID, Env, Input).
+        
+getacdata(SessionID, Env, Input) ->
+    getdataasjson(SessionID, Env, Input, aclog, fun calcKiloWatts/2).
+
+getgasdata(SessionID, Env, Input) ->
+    getdataasjson(SessionID, Env, Input, gaslog, fun calcCubicMetersPerHour/2).

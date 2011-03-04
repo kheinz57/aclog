@@ -1,0 +1,122 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<!--
+   Copyright 2010 Heinz Haeberle
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+-->
+<html><head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <title>Strom- und Gasverbrauch</title>
+    <link href="basic-Dateien/layout.css" rel="stylesheet" type="text/css">
+    <link href="aclog.css" rel="stylesheet" type="text/css"  media="screen">
+    <!--[if IE]><script language="javascript" type="text/javascript" src="../excanvas.min.js"></script><![endif]-->
+    <script language="javascript" type="text/javascript" src="jquery.js"></script>
+    <script language="javascript" type="text/javascript" src="jquery.flot.js"></script>
+    <script language="javascript" type="text/javascript" src="basic-Dateien/jquery_002.js"></script>
+    <script language="javascript" type="text/javascript" src="basic-Dateien/jquery.js"></script>
+	</head><body>
+    <div id="CanvasAC" style="width:800px;height:200px;"></div>
+    <div id="CanvasGas" style="width:800px;height:200px;"></div>
+<script id="source" language="javascript" type="text/javascript">
+
+d = new Date();
+PlotRange ="";
+PlotAutoUpdate=true;
+timeOffset = d.getTimezoneOffset() * 60*1000*(-1);
+var options = {
+    series: {
+        lines: { show: true },
+        points: { show: true }
+    },
+    yaxis:{min: 0},
+    xaxis: {
+        mode: "time",
+        timeformat: "%y-%m-%d %H:%M:%S"
+    },
+    grid: {
+        backgroundColor: { colors: ["#fff", "#eee"] }
+    }
+};
+
+function clearPlotArea(canvas,label){
+    var data = [{ data: [], label: label}];
+    $.plot($(canvas), data, options);
+}
+
+function plotdata(canvas, values, label){
+    var data = [{ data: values, label: label}];
+    $.plot($(canvas), data, options);
+}
+
+function loadDataAC (){
+    var canvas = "#CanvasAC";
+    var label  = "kW";
+    clearPlotArea(canvas,label);
+    
+    $.getJSON("/erl/aclog:getacdata"+PlotRange,function(data){
+        var values= new Array();
+        for( i=0;i<data.data.length;i++){
+            values.push([data.data[i][0] + timeOffset,data.data[i][1]]);
+        }
+        plotdata(canvas,values,label);
+        if (PlotAutoUpdate){
+            setTimeout(function(){loadDataAC(); },30000);
+         }
+    });
+}
+
+function loadDataGas (){
+    var canvas = "#CanvasGas";
+    var label  = "qm/hour";
+    clearPlotArea(canvas,label);
+    
+    $.getJSON("/erl/aclog:getgasdata"+PlotRange,function(data){
+        var values= new Array();
+        for( i=0;i<data.data.length;i++){
+            values.push([data.data[i][0] + timeOffset,data.data[i][1]]);
+        }
+        plotdata(canvas,values,label);
+        if (PlotAutoUpdate){
+            setTimeout(function(){loadDataGas(); },30000);
+         }
+    });
+}
+function simulateGasMeter(){
+    $.get("/erl/aclog:vz?port=0&time=1819007");
+    var sleeptime = 2000 + Math.floor(Math.random()*2000)
+    setTimeout( function() {simulateGasMeter(); }, sleeptime);
+}
+
+function simulateACMeter(){
+    $.get("/erl/aclog:vz?port=0&time=1819007");
+    var sleeptime = 5000 + Math.floor(Math.random()*2000)
+    setTimeout( function() {simulateACMeter(); }, sleeptime);
+}
+
+
+$(function () {
+	//normalerweise werden hier einfach die letzten 24 Stunden geladen. Da ber die Abtastung grad nicht laeuft halt diese Zeit. Da gibt es zumindest Daten
+//	loadData ("?from=2010-06-01.15:30:00:00&to=2010-06-01.17:00:00");
+//	PlotRange  ="?from=2010-06-01.15:30:00&to=2010-06-01.17:00:00";
+//	PlotRange  ="?from=2011-02-10.22:00:00&to=2011-02-10.23:20:00";
+//	PlotRange  ="?lasthours=1"
+//	PlotRange  ="?lasthours=1"
+    PlotRange  ="?lastminutes=5"
+//	PlotRange  =""
+//	loadDataAC ();
+    loadDataGas();
+//    simulateGasMeter();
+//    simulateACMeter();
+});
+</script>
+ </body></html>
