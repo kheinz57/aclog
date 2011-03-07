@@ -17,10 +17,12 @@
 % I do not know why this is required. They are used in exported functions 
 % but still get marked by the compiler as unused??
 -export ([calcCubicMetersPerHour/2,calcKiloWatts/2]). 
+-export([qd/0]).
 
 -include_lib("stdlib/include/qlc.hrl").
 % systime and remote time are stored as milliseconds since the epoch (1970-1-1 0:0:0)
--record(logpuls, {systime,remotetime,turns, port}).
+-record(aclog, {systime,remotetime,turns, port}).
+-record(oldlog, {systime,remotetime,turns}).
 
 -define(TURNSPERKWH,75). % how many turns per kWh. Is specific for the used meter
 -define(TURNSPERCUBICMETER,100). % how many turns per cubic meter. Is specific for the used meter.
@@ -89,7 +91,7 @@ calcCubicMetersPerHour(DiffTimeInMS, Turns) ->
 	CubicMeter / Hours.
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% set up the database and create the table logpuls 
+% set up the database and create the table aclog 
 % it will be stored on disk and without a replication
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 setupDatabase() ->
@@ -97,27 +99,43 @@ setupDatabase() ->
 	mnesia:delete_schema([node()]),
 	mnesia:create_schema([node()]),
 	mnesia:start(),
-	mnesia:clear_table(logpuls),
-    Result = mnesia:create_table(logpuls, [ 
+	mnesia:clear_table(aclog),
+    Result = mnesia:create_table(aclog, [ 
         {disc_copies, [node()] },
-        {attributes,record_info(fields,logpuls)}
+        {attributes,record_info(fields,aclog)}
     ]),
 	io:format("create_table()=~p~n",[Result]),
 	io:format("setupDatabase done~n", []).
 
+    
+transformDatabase() ->
+    Transformer = fun(X) when record(X,oldlog) ->
+       Newrec = #aclog{systime=X#oldlog.systime,
+                    remotetime=X#oldlog.remotetime,
+                    turns=X#oldlog.turns, 
+                    port=0},
+       io:format("~p -> ~p ~n",[X,Newrec]),
+       Newrec
+    end,
+    Result = mnesia:transform(aclog, Transformer, 
+                record_info(fields,aclog),aclog),
+    io:format("result transform= ~p ~n",[Result]).    
+%    has to be {atomic,ok}    
+    
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % start database and connect to a - hopefully - existing table
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 initDatabase() ->
 	mnesia:start(),
-	TableInitState = mnesia:wait_for_tables([logpuls], 5000),
+	TableInitState = mnesia:wait_for_tables([aclog], 5000),
 	case  TableInitState of
 		ok ->
-			io:format("initDatabase logpuls done~n", []);
+			io:format("initDatabase aclog done~n", []);
 		_  ->
-			io:format("mnesia:wait_for_tables(logpuls)=~p~nsetting up database ...",[TableInitState]),
+			io:format("mnesia:wait_for_tables(aclog)=~p~nsetting up database ...",[TableInitState]),
 			setupDatabase()
 	end.
+%    transformDatabase().
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % create some sample data
@@ -126,7 +144,7 @@ fillTable(List, _Time, 0) -> List;
 fillTable(List, Time, Elements) ->
 	Time1 = Time  + 1 + random:uniform(150),
 	Time2 = (Time1  * 1000) + random:uniform(1000),
-	Entry = #logpuls{systime=Time1*1000,remotetime=Time2,turns=1, port=0},
+	Entry = #aclog{systime=Time1*1000,remotetime=Time2,turns=1, port=0},
 	List1 = List ++ [Entry],
 	fillTable(List1,Time1, Elements-1).
 
@@ -134,7 +152,7 @@ createSampleData(Entries)->
 	Dt = calendar:local_time(),
 	GregorianSeconds = calendar:datetime_to_gregorian_seconds(Dt)-719528*24*3600,
 	Table = fillTable([],GregorianSeconds,Entries),
-	F = fun() -> lists:foreach(fun mnesia:write/3, logpuls, Table, write) end,
+	F = fun() -> lists:foreach(fun mnesia:write/3, aclog, Table, write) end,
 	{atomic,_Result} = mnesia:transaction(F),
 	nil.
 
@@ -146,7 +164,7 @@ addEntry(Time, Turns, Port)->
 	io:format("addentry(~p,~p,~p)~n",[Time, Turns, Port]),
 	Servertime=getActTimeUTC(),
 	io:format("Servertime=~p~n",[Servertime]),
-	Entry = #logpuls{systime=Servertime,remotetime=Time,turns=Turns,port=Port},
+	Entry = #aclog{systime=Servertime,remotetime=Time,turns=Turns,port=Port},
 	io:format("Entry=~p~n",[Entry]),
 	F = fun() -> mnesia:write(Entry) end,
     Res = mnesia:transaction(F),
@@ -170,14 +188,14 @@ calcDiff(_PreviousTime, [], Accu) ->
 
 calcDiff(PreviousTime, List, Accu) ->
 	[H|T] = List,
-	ActTime = H#logpuls.remotetime,
+	ActTime = H#aclog.remotetime,
 	DiffTime = ActTime - PreviousTime,
 	if
 		DiffTime < 2000 ->
 %			io:format("ActTime=~p  Diff: ~p~n",[ActTime,DiffTime]),
 			calcDiff(ActTime, T, Accu);
 		true ->
-			AccuNew = Accu ++ [{DiffTime,ActTime,H#logpuls.turns}],
+			AccuNew = Accu ++ [{DiffTime,ActTime,H#aclog.turns}],
 			calcDiff(ActTime, T, AccuNew)
 	end.
 
@@ -193,42 +211,72 @@ makeJSList(ConversionFunction,DiffList, Accu) ->
 	AccuNew = Accu++[DataPair],
  	makeJSList(ConversionFunction,Rest, AccuNew).
 
-%sumEntries(Entry, {}
-
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % In case of too many datapoints for the web page (it does not help to send more data
 % to the browser as there are horizontal pixels)
 % this is an optimization not done yet
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+reduceList([], Elements, Accu) ->
+    io:format("reduceList([], ~p,~p)~n",[Elements, Accu]),
+    Accu;
+reduceList(LongList, Elements, Accu) when Elements > length(LongList) ->
+    io:format("reduceList(~p, ~p,~p) when Elements > length(LongList)~n",[LongList,Elements, Accu]),
+    reduceList(LongList, length(LongList), Accu);
+    
+reduceList(LongList, Elements, Accu) ->
+    io:format("reduceList(~p,~p,~p)~n",[LongList, Elements, Accu]),
+    {Head,NewLongList} = lists:split(Elements, LongList),
+    io:format("Head=~p~n", [Head]),
+    io:format("NewLongList=~p~n", [NewLongList]),
+    Turns = lists:foldl(fun(X,Sum) -> X#aclog.turns + Sum end, 0, Head),
+    io:format("turns=~p~n", [Turns]),
+    
+    [First|_] = Head,
+    io:format("First=~p~n",[First]), 
+    NewRecord = #aclog{systime=First#aclog.systime,
+                    remotetime=First#aclog.remotetime,
+                    turns=Turns, 
+                    port=First#aclog.port},
+    io:format("NewRecord=~p~n",[NewRecord]), 
+%    reduceList(NewLongList, Elements, lists:append(Accu,[NewRecord])).
+    reduceList(NewLongList, Elements, Accu ++ [NewRecord]).
+
+% gets x-elements from the list, sum those and add the result to the return list
 reduceList(LongList) ->
-	LongList.
+    {Head,_} = lists:split(7, LongList),
+    reduceList(Head, 2, []).
 	
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Get the data for the given interval and return the date as a JSON struct/list
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 queryDatabase(QueryStartTime, QueryEndTime, Port, ConversionFunction) ->
-    io:format("queryDatabase ~p~n",[ConversionFunction]),
-	UnsortedList = do(qlc:q([X || X <- mnesia:table(logpuls),
-            (X#logpuls.remotetime >= QueryStartTime), 
-            (X#logpuls.remotetime < QueryEndTime),
-            (X#logpuls.port == Port)])
+    io:format("queryDatabase(~p,~p,~p) ~n",[QueryStartTime, QueryEndTime, Port]),
+	UnsortedList = do(qlc:q([X || X <- mnesia:table(aclog),
+            (X#aclog.remotetime >= QueryStartTime), 
+            (X#aclog.remotetime < QueryEndTime),
+            (X#aclog.port == Port)])
         ),
-	LongList=lists:sort(fun(A, B) -> A#logpuls.remotetime =< B#logpuls.remotetime end, UnsortedList),
+	LongList=lists:sort(fun(A, B) -> A#aclog.remotetime =< B#aclog.remotetime end, UnsortedList),
+    io:format("LongList=~p~n",[LongList]),
 	List = reduceList(LongList),
+    io:format("    List=~p~n",[List]),
 	[H|T] = List,
-	StartTime = H#logpuls.remotetime,
+	StartTime = H#aclog.remotetime,
 	DiffList = calcDiff(StartTime, T,[]),
 	DataList = makeJSList(ConversionFunction,DiffList,[]),
 	[_|DataListJS] = lists:flatten([io_lib:format(",[~B,~f]",[X,Y]) || {X,Y}<-DataList]),
 	io:format("[~s]",[DataListJS]),
 	io_lib:format("[~s]",[DataListJS]).
 
+qd() ->
+    queryDatabase(1299490962000, 1299526962000, 1, fun calcKiloWatts/2).
+
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % get all data of given table
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 query_full_table() ->
-	RandomList = do(qlc:q([X || X <- mnesia:table(logpuls)])),
-	List=lists:sort(fun(A, B) -> A#logpuls.remotetime =< B#logpuls.remotetime end, RandomList),
+	RandomList = do(qlc:q([X || X <- mnesia:table(aclog)])),
+	List=lists:sort(fun(A, B) -> A#aclog.remotetime =< B#aclog.remotetime end, RandomList),
 	io_lib:format("query result:~p~n",[List]).
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
