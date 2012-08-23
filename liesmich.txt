@@ -11,4 +11,7 @@ Deshalb habe ich das Projekt gemacht mit folgenden Mitteln:
 - Kommunikation zu dem Server über JSON
 - Die Client Seite ist mit iQuery und Flot zur Darstellung der Kurven gemacht (keine Server-Site-Bitmaps)
 
-Eigentlich möchte ich das embedded Linux Teil durch einen kleinen Controller (PIC oder ARM Cortex z.B.) ersetze
+Eigentlich möchte ich das embedded Linux Teil durch einen kleinen Controller (PIC oder ARM Cortex z.B.) ersetzen
+was auch - siehe ethersex clone - gelungen ist.
+
+Der naechste Schritt ist über OSGi auf dem raspberry Pi
